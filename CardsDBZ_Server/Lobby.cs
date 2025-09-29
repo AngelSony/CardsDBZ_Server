@@ -4,9 +4,14 @@ namespace CardsDBZ_Server
     public class Lobby
     {
         private List<Player> _players = new List<Player>();
+        private List<Table> _tables = new List<Table>();
         public void Start()
         {
             Console.WriteLine("Game Lobby starting");
+            for(int i = 0; i < 5; i++)
+            {
+                _tables.Add(new Table(i));
+            }
         }
         public void AddPlayer(string connectionId, string playerName)
         {

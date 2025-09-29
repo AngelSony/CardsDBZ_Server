@@ -1,5 +1,6 @@
 using CardsDBZ_Server;
 using CardsDBZ_Server.Hubs;
+using Microsoft.Extensions.Logging.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,7 +13,7 @@ app.MapGet("/", () => "Hello World!");
 
 var Lobby = app.Services.GetRequiredService<Lobby>();
 Lobby.Start();
-
 app.MapHub<LobbyHub>("/lobby");
+
 
 app.Run();
