@@ -11,18 +11,19 @@ namespace CardsDBZ_Server.Hubs
             _lobby = lobby;
         }
 
-        public async Task JoinServer(string playerName)
+        public async Task JoinServer(string roomId, string playerName)
         {
             var connectionId = Context.ConnectionId;
-            Console.WriteLine($"Player {playerName} joined with connection {connectionId}.");
+            Console.WriteLine($"Player {playerName} joined room {roomId} with connection {connectionId}.");
 
-            var result = _lobby.AddPlayer(connectionId, playerName);
+            var result = _lobby.AddPlayer(roomId, connectionId, playerName);
 
             if (result.IsWaiting)
             {
                 await Clients.Caller.SendAsync("WaitingForOpponent", new
                 {
-                    you = result.Player.Name
+                    you = result.Player.Name,
+                    room = result.RoomId
                 });
                 return;
             }
@@ -39,19 +40,22 @@ namespace CardsDBZ_Server.Hubs
             {
                 you = result.Player.Name,
                 opponent = result.Opponent.Name,
-                group = result.GroupName
+                group = result.GroupName,
+                room = result.RoomId
             });
 
             await Clients.Client(result.Opponent.ConnectionId).SendAsync("MatchFound", new
             {
                 you = result.Opponent.Name,
                 opponent = result.Player.Name,
-                group = result.GroupName
+                group = result.GroupName,
+                room = result.RoomId
             });
 
             await Clients.Group(result.GroupName).SendAsync("GameStarted", new
             {
                 group = result.GroupName,
+                room = result.RoomId,
                 players = new[] { result.Player.Name, result.Opponent.Name }
             });
         }
@@ -59,7 +63,8 @@ namespace CardsDBZ_Server.Hubs
         public async Task SendGameMessage(string message)
         {
             var group = _lobby.GetGroupFor(Context.ConnectionId);
-            if (group is null)
+            var room = _lobby.GetRoomFor(Context.ConnectionId);
+            if (group is null || room is null)
             {
                 return;
             }
@@ -67,6 +72,7 @@ namespace CardsDBZ_Server.Hubs
             await Clients.Group(group).SendAsync("GameMessage", new
             {
                 from = Context.ConnectionId,
+                room,
                 message
             });
         }
@@ -84,7 +90,9 @@ namespace CardsDBZ_Server.Hubs
             {
                 await Clients.Client(result.Opponent.ConnectionId).SendAsync("OpponentDisconnected", new
                 {
-                    opponent = Context.ConnectionId
+                    opponent = Context.ConnectionId,
+                    room = result.RoomId,
+                    group = result.PreviousGroup
                 });
 
                 if (result.PreviousGroup is not null)
@@ -98,7 +106,8 @@ namespace CardsDBZ_Server.Hubs
                     {
                         await Clients.Client(result.Opponent.ConnectionId).SendAsync("WaitingForOpponent", new
                         {
-                            you = result.Opponent.Name
+                            you = result.Opponent.Name,
+                            room = requeue.RoomId
                         });
                     }
                     else if (requeue.HasMatch && requeue.GroupName is not null && requeue.Opponent is not null)
@@ -110,19 +119,22 @@ namespace CardsDBZ_Server.Hubs
                         {
                             you = result.Opponent.Name,
                             opponent = requeue.Opponent.Name,
-                            group = requeue.GroupName
+                            group = requeue.GroupName,
+                            room = requeue.RoomId
                         });
 
                         await Clients.Client(requeue.Opponent.ConnectionId).SendAsync("MatchFound", new
                         {
                             you = requeue.Opponent.Name,
                             opponent = result.Opponent.Name,
-                            group = requeue.GroupName
+                            group = requeue.GroupName,
+                            room = requeue.RoomId
                         });
 
                         await Clients.Group(requeue.GroupName).SendAsync("GameStarted", new
                         {
                             group = requeue.GroupName,
+                            room = requeue.RoomId,
                             players = new[] { result.Opponent.Name, requeue.Opponent.Name }
                         });
                     }

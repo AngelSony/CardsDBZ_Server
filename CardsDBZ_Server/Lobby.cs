@@ -4,21 +4,21 @@
     {
         private readonly object _syncLock = new();
         private readonly Dictionary<string, Player> _players = new();
-        private readonly Dictionary<string, MatchMembership> _memberships = new();
-        private Player? _waitingPlayer;
+        private readonly Dictionary<string, RoomState> _rooms = new();
 
         public void Start()
         {
             Console.WriteLine("Game Lobby starting");
         }
 
-        public JoinResult AddPlayer(string connectionId, string name)
+        public JoinResult AddPlayer(string roomId, string connectionId, string name)
         {
             lock (_syncLock)
             {
-                var player = new Player(connectionId, name);
+                var player = new Player(connectionId, name, roomId);
                 _players[connectionId] = player;
-                return QueuePlayer(player);
+                var room = GetOrCreateRoom(roomId);
+                return room.AddPlayer(player);
             }
         }
 
@@ -26,30 +26,26 @@
         {
             lock (_syncLock)
             {
-                if (!_players.Remove(connectionId, out _))
+                if (!_players.Remove(connectionId, out var player))
                 {
-                    return new DisconnectResult(null, null, null);
+                    return new DisconnectResult(null, null, null, null);
                 }
 
-                if (_waitingPlayer?.ConnectionId == connectionId)
+                if (!_rooms.TryGetValue(player.RoomId, out var room))
                 {
-                    _waitingPlayer = null;
-                    return new DisconnectResult(null, null, null);
+                    return new DisconnectResult(null, null, null, player.RoomId);
                 }
 
-                if (_memberships.Remove(connectionId, out var membership))
-                {
-                    if (_players.TryGetValue(membership.OpponentConnectionId, out var opponent))
-                    {
-                        _memberships.Remove(opponent.ConnectionId);
-                        var requeueResult = QueuePlayer(opponent);
-                        return new DisconnectResult(opponent, membership.GroupName, requeueResult);
-                    }
+                Player? ResolvePlayer(string id) => _players.TryGetValue(id, out var p) ? p : null;
 
-                    return new DisconnectResult(null, membership.GroupName, null);
+                var result = room.RemovePlayer(player, ResolvePlayer);
+
+                if (room.IsEmpty)
+                {
+                    _rooms.Remove(player.RoomId);
                 }
 
-                return new DisconnectResult(null, null, null);
+                return result with { RoomId = player.RoomId };
             }
         }
 
@@ -57,45 +53,121 @@
         {
             lock (_syncLock)
             {
-                return _memberships.TryGetValue(connectionId, out var membership)
-                    ? membership.GroupName
+                if (!_players.TryGetValue(connectionId, out var player))
+                {
+                    return null;
+                }
+
+                return _rooms.TryGetValue(player.RoomId, out var room)
+                    ? room.GetGroupFor(connectionId)
                     : null;
             }
         }
 
-        private JoinResult QueuePlayer(Player player)
+        public string? GetRoomFor(string connectionId)
         {
-            if (_waitingPlayer is null)
+            lock (_syncLock)
             {
-                _waitingPlayer = player;
-                return new JoinResult(player, null, null);
+                return _players.TryGetValue(connectionId, out var player)
+                    ? player.RoomId
+                    : null;
             }
-
-            if (_waitingPlayer.ConnectionId == player.ConnectionId)
-            {
-                return new JoinResult(player, null, null);
-            }
-
-            var opponent = _waitingPlayer;
-            _waitingPlayer = null;
-
-            var groupName = $"match-{Guid.NewGuid():N}";
-            _memberships[player.ConnectionId] = new MatchMembership(groupName, opponent.ConnectionId);
-            _memberships[opponent.ConnectionId] = new MatchMembership(groupName, player.ConnectionId);
-
-            return new JoinResult(player, opponent, groupName);
         }
 
-        public record Player(string ConnectionId, string Name);
+        private RoomState GetOrCreateRoom(string roomId)
+        {
+            if (_rooms.TryGetValue(roomId, out var room))
+            {
+                return room;
+            }
 
-        public record JoinResult(Player Player, Player? Opponent, string? GroupName)
+            room = new RoomState(roomId);
+            _rooms.Add(roomId, room);
+            return room;
+        }
+
+        public record Player(string ConnectionId, string Name, string RoomId);
+
+        public record JoinResult(Player Player, Player? Opponent, string? GroupName, string RoomId)
         {
             public bool IsWaiting => Opponent is null;
             public bool HasMatch => Opponent is not null && GroupName is not null;
         }
 
-        public record DisconnectResult(Player? Opponent, string? PreviousGroup, JoinResult? RequeueResult);
+        public record DisconnectResult(Player? Opponent, string? PreviousGroup, JoinResult? RequeueResult, string? RoomId);
 
-        private record MatchMembership(string GroupName, string OpponentConnectionId);
+        private class RoomState
+        {
+            private readonly string _roomId;
+            private readonly Dictionary<string, MatchMembership> _memberships = new();
+            private Player? _waitingPlayer;
+
+            public RoomState(string roomId)
+            {
+                _roomId = roomId;
+            }
+
+            public JoinResult AddPlayer(Player player)
+            {
+                return QueuePlayer(player);
+            }
+
+            public DisconnectResult RemovePlayer(Player leavingPlayer, Func<string, Player?> playerResolver)
+            {
+                if (_waitingPlayer?.ConnectionId == leavingPlayer.ConnectionId)
+                {
+                    _waitingPlayer = null;
+                    return new DisconnectResult(null, null, null, _roomId);
+                }
+
+                if (_memberships.Remove(leavingPlayer.ConnectionId, out var membership))
+                {
+                    if (playerResolver(membership.OpponentConnectionId) is { } opponent)
+                    {
+                        _memberships.Remove(opponent.ConnectionId);
+                        var requeueResult = QueuePlayer(opponent);
+                        return new DisconnectResult(opponent, membership.GroupName, requeueResult, _roomId);
+                    }
+
+                    return new DisconnectResult(null, membership.GroupName, null, _roomId);
+                }
+
+                return new DisconnectResult(null, null, null, _roomId);
+            }
+
+            public string? GetGroupFor(string connectionId)
+            {
+                return _memberships.TryGetValue(connectionId, out var membership)
+                    ? membership.GroupName
+                    : null;
+            }
+
+            public bool IsEmpty => _waitingPlayer is null && _memberships.Count == 0;
+
+            private JoinResult QueuePlayer(Player player)
+            {
+                if (_waitingPlayer is null)
+                {
+                    _waitingPlayer = player;
+                    return new JoinResult(player, null, null, _roomId);
+                }
+
+                if (_waitingPlayer.ConnectionId == player.ConnectionId)
+                {
+                    return new JoinResult(player, null, null, _roomId);
+                }
+
+                var opponent = _waitingPlayer;
+                _waitingPlayer = null;
+
+                var groupName = $"match-{Guid.NewGuid():N}";
+                _memberships[player.ConnectionId] = new MatchMembership(groupName, opponent.ConnectionId);
+                _memberships[opponent.ConnectionId] = new MatchMembership(groupName, player.ConnectionId);
+
+                return new JoinResult(player, opponent, groupName, _roomId);
+            }
+
+            private record MatchMembership(string GroupName, string OpponentConnectionId);
+        }
     }
 }
