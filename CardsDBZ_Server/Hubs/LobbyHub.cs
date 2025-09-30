@@ -9,40 +9,27 @@ namespace CardsDBZ_Server.Hubs
         {
             _lobby = lobby;
         }
-
-        public async Task JoinServer(string playerName)
+        public async Task TableListUpdate()
         {
-            string connectionId = Context.ConnectionId;
-            Console.WriteLine($"Player {playerName} joined.");
-
-            _lobby.AddPlayer(connectionId, playerName);
-
-            await Clients.Caller.SendAsync("PlayerListUpdate", _lobby.GetPlayerList());
+            await Clients.Caller.SendAsync("TableListUpdate", _lobby.GetTableList());
         }
         public async Task PlayerListUpdate()
         {
             await Clients.Caller.SendAsync("PlayerListUpdate", _lobby.GetPlayerList());
         }
-
-        public async Task SendGameMessage(string message)
+        public async Task JoinServer(string playerName)
         {
-            /*var group = _lobby.GetGroupFor(Context.ConnectionId);
-            if (group is null)
-            {
-                return;
-            }
+            string connectionId = Context.ConnectionId;
+            Console.WriteLine($"{DateTime.Now} Player {playerName} joined.");
 
-            await Clients.Group(group).SendAsync("GameMessage", new
-            {
-                from = Context.ConnectionId,
-                message
-            });*/
+            _lobby.AddPlayer(connectionId, playerName);
+
+            await Clients.Caller.SendAsync("PlayerListUpdate", _lobby.GetPlayerList());
         }
-
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            Player removedPlayer = _lobby.RemovePlayer(Context.ConnectionId) ?? new Player("dummy", "dummy");
-            Console.WriteLine($"Player {removedPlayer.PlayerName} disconnected.");
+            Player removedPlayer = _lobby.RemovePlayer(Context.ConnectionId) ?? new Player("error", "error");
+            Console.WriteLine($"{DateTime.Now} Player {removedPlayer.PlayerName} disconnected.");
 
             await base.OnDisconnectedAsync(exception);
         }

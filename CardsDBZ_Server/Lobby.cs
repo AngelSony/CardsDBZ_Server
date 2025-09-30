@@ -7,8 +7,8 @@ namespace CardsDBZ_Server
         private List<Table> _tables = new List<Table>();
         public void Start()
         {
-            Console.WriteLine("Game Lobby starting");
-            for(int i = 0; i < 5; i++)
+            Console.WriteLine($"{DateTime.Now} Game Lobby starting");
+            for(int i = 1; i <= 5; i++)
             {
                 _tables.Add(new Table(i));
             }
@@ -31,6 +31,14 @@ namespace CardsDBZ_Server
                 playerList += player.PlayerName + Environment.NewLine;
             }
             return playerList.Trim();
+        }
+        public List<TableData> GetTableList()
+        {
+            List<TableData> tdataList = new List<TableData>();
+            foreach (Table table in _tables) {
+                tdataList.Add(table.GetTableData());
+            }
+            return tdataList;
         }
     }
 }
